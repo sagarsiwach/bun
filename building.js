@@ -32,8 +32,12 @@ const handleSetCookieHeader = (setCookieHeaders) => {
     cookies += `${name}=${value}; `;
   });
 };
-
 const makeRequest = async (url, options) => {
+  if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    console.error(`Invalid URL: ${url}`);
+    return Promise.reject(new Error("Invalid URL")); // Early return on invalid URL
+  }
+
   options.agent = httpsAgent; // Use the custom HTTPS agent for pooling
   options.headers = {
     ...options.headers,
@@ -43,10 +47,12 @@ const makeRequest = async (url, options) => {
     Referer: base_url,
     ...options.headers,
   };
+
+  console.log(`Making request to URL: ${url}`); // Log the URL to diagnose issues
   const response = await fetch(url, options);
   if (!response.ok) {
-    console.error(`HTTP error! Status: ${response.status}`);
-    throw new Error("Request failed");
+    console.error(`HTTP error! Status: ${response.status} for URL: ${url}`);
+    throw new Error(`Request failed with status ${response.status}`);
   }
   handleSetCookieHeader(response.headers.get("set-cookie")?.split(","));
   const data = await response.text();
@@ -68,7 +74,7 @@ const executeLoginFlow = async () => {
     let result = await makeRequest("https://gotravspeed.com", {
       method: "POST",
       body: `name=${encodeURIComponent(USERNAME)}&password=${encodeURIComponent(
-        PASSWORD,
+        PASSWORD
       )}`,
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
     });
@@ -110,7 +116,7 @@ const executeLoginFlow = async () => {
 const buildNewBuilding = async (pid, bid) => {
   try {
     console.log(
-      `======= Building new building (pid: ${pid}, bid: ${bid}) =======`,
+      `======= Building new building (pid: ${pid}, bid: ${bid}) =======`
     );
 
     // Navigate to build.php?id=<pid>
@@ -118,25 +124,37 @@ const buildNewBuilding = async (pid, bid) => {
       method: "GET",
     });
 
-    // Extract the CSRF token (k=<token>) from the response
     const $ = cheerio.load(pageContent);
-    const csrfToken = $("a.build")
-      .attr("href")
-      .match(/k=(\w+)/)[1];
+    let buildingLinkFound = false;
+    let buildUrl = "";
 
-    // Construct the URL for building the new building
-    const buildUrl = `${base_url}/village2.php?id=${pid}&b=${bid}&k=${csrfToken}`;
+    // Check if the building link with the specific pid and bid is present
+    $("a").each(function () {
+      const href = $(this).attr("href");
+      if (href && href.includes(`id=${pid}`) && href.includes(`b=${bid}`)) {
+        buildingLinkFound = true;
+        buildUrl = `${base_url}/${href}`;
+        return false; // break the loop once the building link is found
+      }
+    });
 
-    console.log("Build URL:", buildUrl); // Print the build URL
-
-    // Make a GET request to the constructed URL to build the new building
-    let response = await makeRequest(buildUrl, { method: "GET" });
-    console.log("Response Body:", response); // Print the response body
-    console.log(`New building (pid: ${pid}, bid: ${bid}) built successfully!`);
+    if (buildingLinkFound) {
+      console.log("Build URL:", buildUrl); // Print the build URL
+      // Make a GET request to the constructed URL to build the new building
+      let response = await makeRequest(buildUrl, { method: "GET" });
+      // console.log("Response Body:", response); // Print the response body
+      console.log(
+        `New building (pid: ${pid}, bid: ${bid}) built successfully!`
+      );
+    } else {
+      console.log(
+        `Building link not found for pid: ${pid}, bid: ${bid}. Assuming building is already constructed.`
+      );
+    }
   } catch (error) {
     console.error(
       `Error building new building (pid: ${pid}, bid: ${bid}):`,
-      error,
+      error
     );
   }
 };
@@ -144,43 +162,71 @@ const buildNewBuilding = async (pid, bid) => {
 const upgradeBuilding = async (pid, bid, loop) => {
   try {
     console.log(
-      `======= Upgrading building (pid: ${pid}, bid: ${bid}) =======`,
+      `======= Upgrading building (pid: ${pid}, bid: ${bid}) =======`
     );
 
-    // Navigate to build.php?id=<pid>
+    // Function to fetch the upgrade link with the new CSRF token
+    const fetchUpgradeLink = async () => {
+      let pageContent = await makeRequest(`${base_url}/build.php?id=${pid}`, {
+        method: "GET",
+      });
+      const $ = cheerio.load(pageContent);
+
+      // Find the specific upgrade link that includes both the pid and the CSRF token
+      const linkElement = $(
+        `a[href*='village2.php?id=${pid}'][href*='&k=']`
+      ).first();
+      if (linkElement.length) {
+        const upgradeLink = `${base_url}/${linkElement.attr("href")}`;
+        console.log(`Found upgrade link: ${upgradeLink}`);
+        return upgradeLink;
+      } else {
+        console.error(
+          "No valid upgrade link found. Unable to proceed with the upgrade."
+        );
+        return null; // Optionally, throw an error or handle this case as needed
+      }
+    };
+
+    // Check if the building is already at its maximum level before starting upgrades
     let pageContent = await makeRequest(`${base_url}/build.php?id=${pid}`, {
       method: "GET",
     });
-
-    // Extract the upgrade link from the response
-    const $ = cheerio.load(pageContent);
-    const upgradeLink = $("a.build").attr("href");
-
-    // Check if the building is already at the maximum level
+    const $initial = cheerio.load(pageContent);
     const isMaxLevel =
-      $(".none").text().includes("Updated") &&
-      $(".none").text().includes("Fully");
+      $initial(".none").text().includes("Updated") &&
+      $initial(".none").text().includes("Fully");
 
     if (!isMaxLevel) {
       for (let i = 0; i < loop; i++) {
-        // Make a GET request to the upgrade link
-        await makeRequest(`${base_url}/${upgradeLink}`, { method: "GET" });
-        console.log(
-          `Building (pid: ${pid}, bid: ${bid}) upgraded to level ${i + 1}/${loop}`,
-        );
+        // Fetch a new CSRF token and upgrade link for each iteration
+        const upgradeLink = await fetchUpgradeLink();
+        if (upgradeLink) {
+          await makeRequest(upgradeLink, { method: "GET" });
+          console.log(
+            `Building (pid: ${pid}, bid: ${bid}) upgraded to level ${
+              i + 1
+            }/${loop}`
+          );
+        } else {
+          console.log(
+            "Failed to retrieve a valid upgrade link. Stopping upgrades."
+          );
+          break; // Exit the loop if no valid link is found
+        }
       }
       console.log(
-        `Building (pid: ${pid}, bid: ${bid}) upgraded to the desired level (${loop})!`,
+        `Building (pid: ${pid}, bid: ${bid}) upgraded to the desired level (${loop})!`
       );
     } else {
       console.log(
-        `Building (pid: ${pid}, bid: ${bid}) is already at the maximum level.`,
+        `Building (pid: ${pid}, bid: ${bid}) is already at the maximum level.`
       );
     }
   } catch (error) {
     console.error(
       `Error upgrading building (pid: ${pid}, bid: ${bid}):`,
-      error,
+      error
     );
   }
 };
@@ -189,24 +235,70 @@ const upgradeResourceField = async (pid, loop) => {
   try {
     console.log(`======= Upgrading resource field (pid: ${pid}) =======`);
 
-    // Navigate to build.php?id=<pid>
-    let pageContent = await makeRequest(`${base_url}/build.php?id=${pid}`, {
+    // Function to fetch the upgrade link with the new CSRF token
+    const fetchUpgradeLink = async () => {
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        let pageContent = await makeRequest(`${base_url}/build.php?id=${pid}`, {
+          method: "GET",
+        });
+        const $ = cheerio.load(pageContent);
+        const upgradeLink = $("a.build").attr("href");
+        if (upgradeLink && upgradeLink.includes("k=")) {
+          return `${base_url}/${upgradeLink}`;
+        } else if (attempt < 5) {
+          console.log(
+            `Attempt ${attempt}: No valid upgrade link found. Retrying in 2 seconds...`
+          );
+          await new Promise((resolve) => setTimeout(resolve, 2000)); // Wait for 2 seconds before retrying
+        }
+      }
+      console.error(
+        "Failed to retrieve a valid upgrade link after multiple attempts."
+      );
+      return null; // Return null or throw an error depending on your error handling strategy
+    };
+
+    // Fetch the initial content to determine the current level
+    let initialContent = await makeRequest(`${base_url}/build.php?id=${pid}`, {
       method: "GET",
     });
+    const $initial = cheerio.load(initialContent);
+    const currentLevel = parseInt(
+      $initial("span.level").text().replace("level ", ""),
+      10
+    );
 
-    // Extract the upgrade link from the response
-    const $ = cheerio.load(pageContent);
-    const upgradeLink = $("a.build").attr("href");
-
-    for (let i = 0; i < loop; i++) {
-      // Make a GET request to the upgrade link
-      await makeRequest(`${base_url}/${upgradeLink}`, { method: "GET" });
+    const maxLevel = 30; // Define the maximum level for a resource field
+    if (currentLevel >= maxLevel) {
       console.log(
-        `Resource field (pid: ${pid}) upgraded to level ${i + 1}/${loop}`,
+        `Resource field (pid: ${pid}) is already at the maximum level (${maxLevel}).`
       );
+      return; // Exit function if current level is already at or above max level
     }
+
+    const levelsToUpgrade = Math.min(loop, maxLevel - currentLevel); // Determine the number of levels to upgrade without exceeding the max level
+
+    for (let i = 0; i < levelsToUpgrade; i++) {
+      const upgradeLink = await fetchUpgradeLink();
+      if (upgradeLink) {
+        await makeRequest(upgradeLink, { method: "GET" });
+        console.log(
+          `Resource field (pid: ${pid}) upgraded to level ${
+            currentLevel + i + 1
+          }`
+        );
+      } else {
+        console.log(
+          "Failed to retrieve a valid upgrade link after retries. Stopping upgrades."
+        );
+        break; // Exit the loop if no valid link is found
+      }
+    }
+
     console.log(
-      `Resource field (pid: ${pid}) upgraded to the desired level (${loop})!`,
+      `Resource field (pid: ${pid}) upgraded to the desired level (${
+        currentLevel + levelsToUpgrade
+      })!`
     );
   } catch (error) {
     console.error(`Error upgrading resource field (pid: ${pid}):`, error);
@@ -222,15 +314,25 @@ const main = async () => {
       if (pid <= 18) {
         // Execute resource field logic for pids less than or equal to 18
         console.log(
-          `Upgrading resource field at position ${pid} to level ${loop}`,
+          `Upgrading resource field at position ${pid} to level ${loop}`
         );
         await upgradeResourceField(pid, loop);
       } else {
-        // Execute building logic for pids greater than 18
+        // For pids greater than 18, first construct the building if not already present
         console.log(
-          `Building/upgrading building at position ${pid} with building ID ${bid}`,
+          `Building/upgrading building at position ${pid} with building ID ${bid}`
         );
-        await upgradeBuilding(pid, bid, loop);
+        // Check if building needs to be constructed first
+        await buildNewBuilding(pid, bid); // This assumes building is needed; additional logic may be required to check if building already exists
+
+        // Once building is constructed, proceed with upgrades
+        if (loop > 1) {
+          // If loop > 1, it means upgrades are required beyond initial construction
+          console.log(
+            `Upgrading building at position ${pid} with building ID ${bid} up to level ${loop}`
+          );
+          await upgradeBuilding(pid, bid, loop);
+        }
       }
     }
   } else {

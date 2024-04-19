@@ -37,7 +37,7 @@ async def main():
         cookies = await login()
         # await start_large_celebration(120500, cookies)
         # await increase_storage_async(5000, cookies)
-        await increase_production_async(12500, cookies)
+        await increase_production_async(1250000, cookies)
 
 async def login():
     # Create a new client instance for each login attempt
@@ -50,8 +50,8 @@ async def login():
 
         # Step 2: Submit login credentials
         login_data = {
-            'name': 'scar',
-            'password': 'satkabir'
+            'name': 'india',
+            'password': '151274'
         }
         response = await client.post(base_url, data=login_data, headers=headers)
         if "Login failed" in response.text:
