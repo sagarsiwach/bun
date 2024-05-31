@@ -58,7 +58,7 @@ const executeLoginFlow = async () => {
     let result = await makeRequest("https://gotravspeed.com", {
       method: "POST",
       body: `name=${encodeURIComponent(USERNAME)}&password=${encodeURIComponent(
-        PASSWORD
+        PASSWORD,
       )}`,
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
     });
@@ -104,7 +104,7 @@ const increaseProduction = async () => {
       "https://fun.gotravspeed.com/buy2.php",
       {
         method: "GET",
-      }
+      },
     );
 
     // Use cheerio to parse the HTML and extract the CSRF token
@@ -118,7 +118,7 @@ const increaseProduction = async () => {
 
     // Prepare data for POST request to increase production
     const postData = `selected_res=4&g-recaptcha-response=xxxx&xor=100&key=${encodeURIComponent(
-      key
+      key,
     )}`;
 
     // Execute the POST request to increase production
@@ -133,7 +133,7 @@ const increaseProduction = async () => {
   } catch (error) {
     console.error(
       "An error occurred while trying to increase production:",
-      error
+      error,
     );
   }
 };
@@ -162,7 +162,7 @@ const increaseProductionWithNewToken = async () => {
 
   // Now use this token to make a request
   const postData = `selected_res=4&g-recaptcha-response=xxxx&xor=100&key=${encodeURIComponent(
-    key
+    key,
   )}`;
   await makeRequest("https://fun.gotravspeed.com/buy2.php?t=0&Shop=done", {
     method: "POST",
@@ -176,7 +176,7 @@ const increaseProductionWithNewToken = async () => {
 // Example usage in the main function
 const main = async () => {
   if (await executeLoginFlow()) {
-    for (let i = 0; i < 10000; i++) {
+    for (let i = 0; i < 1000000; i++) {
       // Adjust loop for desired number of iterations
       // console.log(`Attempt ${i + 1} to increase production`);
       await increaseProduction(); // Single production increase per iteration
